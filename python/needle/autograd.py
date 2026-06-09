@@ -77,14 +77,8 @@ class TensorOp(Op):
     """Op class specialized to output tensors, will be alternate subclasses for other structures"""
 
     def __call__(self, *args):
-        将非Tensor类型的输入转换为Tensor
-        tensor_args = []
-        for arg in args:
-            if not isinstance(arg, Tensor):
-                arg = Tensor(arg)
-            tensor_args.append(arg)
-        return Tensor.make_from_op(self, tensor_args) 
-        #return Tensor.make_from_op(self, args)
+        tensor_args = [arg if isinstance(arg, Tensor) else Tensor(arg) for arg in args]
+        return Tensor.make_from_op(self, tensor_args)
 
 
 class TensorTupleOp(Op):
@@ -298,7 +292,7 @@ class Tensor(Value):
     def backward(self, out_grad=None):
         out_grad = (
             out_grad
-            if out_grad
+            if out_grad is not None
             else init.ones(*self.shape, dtype=self.dtype, device=self.device)
         )
         compute_gradient_of_variables(self, out_grad)
@@ -371,7 +365,13 @@ class Tensor(Value):
 
     __radd__ = __add__
     __rmul__ = __mul__
-    __rsub__ = __sub__
+
+    def __rsub__(self, other):
+        return needle.ops.AddScalar(other)(needle.ops.Negate()(self))
+
+    def __rtruediv__(self, other):
+        return needle.ops.MulScalar(other)(needle.ops.PowerScalar(-1)(self))
+
     __rmatmul__ = __matmul__
 
 
@@ -389,10 +389,16 @@ def compute_gradient_of_variables(output_tensor, out_grad):
 
     # Traverse graph in reverse topological order given the output_node that we are taking gradient wrt.
     reverse_topo_order = list(reversed(find_topo_sort([output_tensor])))
-    # TODO
-    ### BEGIN YOUR SOLUTION
-    raise NotImplementedError()
-    ### END YOUR SOLUTION
+    for node in reverse_topo_order:
+        node.grad = sum_node_list(node_to_output_grads_list[node])
+        if node.is_leaf():
+            continue
+        for input_node, input_grad in zip(
+            node.inputs, node.op.gradient_as_tuple(node.grad, node)
+        ):
+            if input_node not in node_to_output_grads_list:
+                node_to_output_grads_list[input_node] = []
+            node_to_output_grads_list[input_node].append(input_grad)
 
 
 def find_topo_sort(node_list: List[Value]) -> List[Value]:
@@ -404,10 +410,20 @@ def find_topo_sort(node_list: List[Value]) -> List[Value]:
     sort.
     """
 
-    # TODO
-    ### BEGIN YOUR SOLUTION
-    raise NotImplementedError()
-    ### END YOUR SOLUTION
+    visited: Set[Value] = set()
+    topo_order: List[Value] = []
+
+    def topo_sort_dfs(node: Value):
+        if node in visited:
+            return
+        visited.add(node)
+        for input_node in node.inputs:
+            topo_sort_dfs(input_node)
+        topo_order.append(node)
+
+    for node in node_list:
+        topo_sort_dfs(node)
+    return topo_order
 
 
 ##############################

@@ -28,13 +28,18 @@ class Conv(Module):
         self.out_channels = out_channels
         self.kernel_size = kernel_size
         self.stride = stride
-        # TODO
-        ### BEGIN YOUR SOLUTION
-        raise NotImplementedError()
-        ### END YOUR SOLUTION
+        bound = (1.0 / (in_channels * kernel_size * kernel_size)) ** 0.5
+        self.weight = Parameter(
+            init.rand(
+                kernel_size, kernel_size, in_channels, out_channels,
+                low=-bound, high=bound, device=device, dtype=dtype
+            )
+        )
+        self.bias = Parameter(init.rand(out_channels, low=-bound, high=bound, device=device, dtype=dtype)) if bias else None
 
     def forward(self, x: Tensor) -> Tensor: # (N, C, H, W)
-        # TODO
-        ### BEGIN YOUR SOLUTION
-        raise NotImplementedError()
-        ### END YOUR SOLUTION
+        x = x.transpose((1, 2)).transpose((2, 3))
+        out = ops.conv(x, self.weight, stride=self.stride, padding=self.kernel_size // 2)
+        if self.bias is not None:
+            out = out + self.bias.reshape((1, 1, 1, self.out_channels)).broadcast_to(out.shape)
+        return out.transpose((2, 3)).transpose((1, 2))
