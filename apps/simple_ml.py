@@ -137,7 +137,7 @@ def epoch_general_cifar10(dataloader, model, epoch, loss_fn=nn.SoftmaxLoss(), op
     total = 0
     for X, y in dataloader:
         X = ndl.Tensor(X, device=device, dtype="float32")
-        y = ndl.Tensor(y, device=device, dtype="int32", requires_grad=False)
+        y = ndl.Tensor(y, device=device, dtype="float32", requires_grad=False)
         logits = model(X)
         loss = loss_fn(logits, y)
         batch_size = X.shape[0]

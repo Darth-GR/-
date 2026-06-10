@@ -231,6 +231,12 @@ class Tensor(Value):
     def _array_from_numpy(numpy_array, device, dtype):
         if array_api is numpy:
             return numpy.array(numpy_array, dtype=dtype)
+        # The custom NDArray backend stores float32 values only.  Labels and
+        # masks may be requested as integer/bool tensors by higher-level code;
+        # keep their numeric values but store them in the supported dtype.
+        if dtype not in (None, "float32"):
+            numpy_array = numpy.array(numpy_array, dtype="float32")
+            dtype = "float32"
         return array_api.array(numpy_array, device=device, dtype=dtype)
 
     @staticmethod
