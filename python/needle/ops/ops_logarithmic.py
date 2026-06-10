@@ -9,14 +9,15 @@ from ..backend_selection import array_api, BACKEND
 
 class LogSoftmax(TensorOp):
     def compute(self, Z):
-        ### BEGIN YOUR SOLUTION
-        raise NotImplementedError()
-        ### END YOUR SOLUTION
+        Z_max = array_api.max(Z, axis=1, keepdims=True)
+        Z_exp = array_api.exp(Z - Z_max.broadcast_to(Z.shape))
+        Z_sum = array_api.sum(Z_exp, axis=1, keepdims=True)
+        return Z - Z_max.broadcast_to(Z.shape) - array_api.log(Z_sum).broadcast_to(Z.shape)
 
     def gradient(self, out_grad, node):
-        ### BEGIN YOUR SOLUTION
-        raise NotImplementedError()
-        ### END YOUR SOLUTION
+        log_probs = logsoftmax(node.inputs[0])
+        probs = exp(log_probs)
+        return out_grad - probs * out_grad.sum(axes=(1,)).reshape((out_grad.shape[0], 1)).broadcast_to(out_grad.shape)
 
 
 def logsoftmax(a):
