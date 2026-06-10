@@ -31,6 +31,25 @@ def _unpack_params(value: object) -> List[Tensor]:
         return []
 
 
+def _named_params(value: object, prefix: str = ""):
+    if isinstance(value, Parameter):
+        return [(prefix.rstrip("."), value)]
+    if isinstance(value, Module):
+        return _named_params(value.__dict__, prefix)
+    if isinstance(value, dict):
+        params = []
+        for k, v in value.items():
+            if k.startswith("_"):
+                continue
+            params += _named_params(v, f"{prefix}{k}.")
+        return params
+    if isinstance(value, (list, tuple)):
+        params = []
+        for i, v in enumerate(value):
+            params += _named_params(v, f"{prefix}{i}.")
+        return params
+    return []
+
 def _child_modules(value: object) -> List["Module"]:
     if isinstance(value, Module):
         modules = [value]
@@ -57,6 +76,30 @@ class Module:
     def parameters(self) -> List[Tensor]:
         """Return the list of parameters in the module."""
         return _unpack_params(self.__dict__)
+
+    def named_parameters(self):
+        """Return (name, parameter) pairs for serialization and debugging."""
+        return _named_params(self.__dict__)
+
+    def state_dict(self):
+        """Return a NumPy-backed snapshot of all trainable parameters."""
+        return {name: param.numpy().copy() for name, param in self.named_parameters()}
+
+    def load_state_dict(self, state_dict):
+        """Load parameters from a mapping produced by state_dict()."""
+        for name, param in self.named_parameters():
+            if name not in state_dict:
+                raise KeyError(f"missing parameter {name}")
+            param.data = Tensor(state_dict[name], device=param.device, dtype=param.dtype, requires_grad=False)
+
+    def save(self, path):
+        """Persist module parameters to an .npz file."""
+        np.savez(path, **self.state_dict())
+
+    def load(self, path):
+        """Load module parameters from an .npz file."""
+        with np.load(path) as state:
+            self.load_state_dict({key: state[key] for key in state.files})
 
     def _children(self) -> List["Module"]:
         return _child_modules(self.__dict__)
@@ -112,7 +155,7 @@ class Linear(Module):
         ### BEGIN YOUR SOLUTION
         y = X @ self.weight # (n, out_features)
 
-        if self.bias:
+        if self.bias is not None:
           y += ops.broadcast_to(self.bias, (*X.shape[:-1], self.out_features))
         
         return y
@@ -142,39 +185,33 @@ class Sequential(Module):
         self.modules = modules
 
     def forward(self, x: Tensor) -> Tensor:
-        # TODO
-        ### BEGIN YOUR SOLUTION
-        raise NotImplementedError()
-        ### END YOUR SOLUTION
+        for module in self.modules:
+            x = module(x)
+        return x
 
 
 class SoftmaxLoss(Module):
     def forward(self, logits: Tensor, y: Tensor):
-        # TODO
-        ### BEGIN YOUR SOLUTION
-        raise NotImplementedError()
-        ### END YOUR SOLUTION
+        batch_size, num_classes = logits.shape
+        y_one_hot = init.one_hot(num_classes, y, device=logits.device, dtype=logits.dtype)
+        logsumexp = ops.logsumexp(logits, axes=(1,))
+        correct_logits = (logits * y_one_hot).sum(axes=(1,))
+        return (logsumexp - correct_logits).sum() / batch_size
         
 class CrossEntrophyLoss(Module):
     def forward(self,logits: Tensor, y: Tensor):
-        # TODO
-        ### BEGIN YOUR SOLUTION
-        raise NotImplementedError()
-        ### END YOUR SOLUTION
+        return SoftmaxLoss()(logits, y)
         
 class BinaryCrossEntrophyLoss(Module):
     def forward(self,logits: Tensor, y: Tensor):
-        # TODO
-        ### BEGIN YOUR SOLUTION
-        raise NotImplementedError()
-        ### END YOUR SOLUTION
+        probs = 1 / (1 + ops.exp(-logits))
+        loss = -(y * ops.log(probs) + (1 - y) * ops.log(1 - probs))
+        return loss.sum() / reduce(lambda a, b: a * b, loss.shape)
         
 class MSELoss(Module):
     def forward(self, input: Tensor, target: Tensor):
-        # TODO
-        ### BEGIN YOUR SOLUTION
-        raise NotImplementedError()
-        ### END YOUR SOLUTION
+        diff = input - target
+        return (diff * diff).sum() / reduce(lambda a, b: a * b, diff.shape)
         
 class BatchNorm1d(Module):
     def __init__(self, dim, eps=1e-5, momentum=0.1, device=None, dtype="float32"):
@@ -182,16 +219,27 @@ class BatchNorm1d(Module):
         self.dim = dim
         self.eps = eps
         self.momentum = momentum
-        # TODO
-        ### BEGIN YOUR SOLUTION
-        raise NotImplementedError()
-        ### END YOUR SOLUTION
+        self.weight = Parameter(init.ones(dim, device=device, dtype=dtype))
+        self.bias = Parameter(init.zeros(dim, device=device, dtype=dtype))
+        self.running_mean = init.zeros(dim, device=device, dtype=dtype)
+        self.running_var = init.ones(dim, device=device, dtype=dtype)
 
     def forward(self, x: Tensor) -> Tensor:
-        # TODO
-        ### BEGIN YOUR SOLUTION
-        raise NotImplementedError()
-        ### END YOUR SOLUTION
+        batch_size = x.shape[0]
+        shape = (1, self.dim)
+        if self.training:
+            mean = x.sum(axes=(0,)) / batch_size
+            centered = x - mean.reshape(shape).broadcast_to(x.shape)
+            var = (centered * centered).sum(axes=(0,)) / batch_size
+            self.running_mean = ((1 - self.momentum) * self.running_mean + self.momentum * mean).detach()
+            self.running_var = ((1 - self.momentum) * self.running_var + self.momentum * var).detach()
+        else:
+            mean = self.running_mean
+            var = self.running_var
+            centered = x - mean.reshape(shape).broadcast_to(x.shape)
+        denom = ((var + self.eps) ** 0.5).reshape(shape).broadcast_to(x.shape)
+        norm = centered / denom
+        return norm * self.weight.reshape(shape).broadcast_to(x.shape) + self.bias.reshape(shape).broadcast_to(x.shape)
 
 
 class BatchNorm2d(BatchNorm1d):
@@ -211,16 +259,16 @@ class LayerNorm1d(Module):
         super().__init__()
         self.dim = dim
         self.eps = eps
-        # TODO
-        ### BEGIN YOUR SOLUTION
-        raise NotImplementedError()
-        ### END YOUR SOLUTION
+        self.weight = Parameter(init.ones(dim, device=device, dtype=dtype))
+        self.bias = Parameter(init.zeros(dim, device=device, dtype=dtype))
 
     def forward(self, x: Tensor) -> Tensor:
-        # TODO
-        ### BEGIN YOUR SOLUTION
-        raise NotImplementedError()
-        ### END YOUR SOLUTION
+        mean = x.sum(axes=(1,)).reshape((x.shape[0], 1)) / self.dim
+        centered = x - mean.broadcast_to(x.shape)
+        var = (centered * centered).sum(axes=(1,)).reshape((x.shape[0], 1)) / self.dim
+        norm = centered / ((var + self.eps) ** 0.5).broadcast_to(x.shape)
+        shape = (1, self.dim)
+        return norm * self.weight.reshape(shape).broadcast_to(x.shape) + self.bias.reshape(shape).broadcast_to(x.shape)
 
 
 class Dropout(Module):
@@ -229,10 +277,12 @@ class Dropout(Module):
         self.p = p
 
     def forward(self, x: Tensor) -> Tensor:
-        # TODO
-        ### BEGIN YOUR SOLUTION
-        raise NotImplementedError()
-        ### END YOUR SOLUTION
+        if not self.training or self.p == 0:
+            return x
+        if self.p >= 1:
+            return init.zeros(*x.shape, device=x.device, dtype=x.dtype)
+        mask = init.randb(*x.shape, p=1 - self.p, device=x.device, dtype=x.dtype)
+        return x * mask / (1 - self.p)
 
 
 class Residual(Module):
@@ -241,7 +291,4 @@ class Residual(Module):
         self.fn = fn
 
     def forward(self, x: Tensor) -> Tensor:
-        # TODO
-        ### BEGIN YOUR SOLUTION
-        raise NotImplementedError()
-        ### END YOUR SOLUTION
+        return x + self.fn(x)

@@ -24,19 +24,33 @@ class SGD(Optimizer):
         self.weight_decay = weight_decay
 
     def step(self):
-        # TODO
-        ### BEGIN YOUR SOLUTION
-        raise NotImplementedError()
-        ### END YOUR SOLUTION
+        for p in self.params:
+            if p.grad is None:
+                continue
+            grad = p.grad.detach()
+            if self.weight_decay:
+                grad = grad + self.weight_decay * p.detach()
+            key = id(p)
+            if self.momentum:
+                velocity = self.u.get(key, ndl.init.zeros(*p.shape, device=p.device, dtype=p.dtype))
+                velocity = self.momentum * velocity + grad
+                self.u[key] = velocity.detach()
+                grad = velocity
+            p.data = p.detach() - self.lr * grad
 
     def clip_grad_norm(self, max_norm=0.25):
-        """
-        Clips gradient norm of parameters.
-        """
-        # TODO
-        ### BEGIN YOUR SOLUTION
-        raise NotImplementedError()
-        ### END YOUR SOLUTION
+        total = 0.0
+        for p in self.params:
+            if p.grad is not None:
+                g = p.grad.numpy()
+                total += float((g * g).sum())
+        norm = total ** 0.5
+        if norm > max_norm and norm > 0:
+            scale = max_norm / norm
+            for p in self.params:
+                if p.grad is not None:
+                    p.grad = p.grad * scale
+        return norm
 
 
 class Adam(Optimizer):
@@ -56,12 +70,24 @@ class Adam(Optimizer):
         self.eps = eps
         self.weight_decay = weight_decay
         self.t = 0
-
         self.u = {}
         self.v = {}
 
     def step(self):
-        # TODO
-        ### BEGIN YOUR SOLUTION
-        raise NotImplementedError()
-        ### END YOUR SOLUTION
+        self.t += 1
+        for p in self.params:
+            if p.grad is None:
+                continue
+            grad = p.grad.detach()
+            if self.weight_decay:
+                grad = grad + self.weight_decay * p.detach()
+            key = id(p)
+            m = self.u.get(key, ndl.init.zeros(*p.shape, device=p.device, dtype=p.dtype))
+            v = self.v.get(key, ndl.init.zeros(*p.shape, device=p.device, dtype=p.dtype))
+            m = self.beta1 * m + (1 - self.beta1) * grad
+            v = self.beta2 * v + (1 - self.beta2) * (grad * grad)
+            self.u[key] = m.detach()
+            self.v[key] = v.detach()
+            m_hat = m / (1 - self.beta1 ** self.t)
+            v_hat = v / (1 - self.beta2 ** self.t)
+            p.data = p.detach() - self.lr * m_hat / ((v_hat ** 0.5) + self.eps)
